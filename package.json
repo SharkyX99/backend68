@@ -7,14 +7,23 @@
   },
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "expess": "^0.0.1-security",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
-    "mysql2": "^3.15.2"
-  }
+    "mysql2": "^3.15.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SharkyX99/backend68.git"
+  },
+  "keywords": [],
+  "bugs": {
+    "url": "https://github.com/SharkyX99/backend68/issues"
+  },
+  "homepage": "https://github.com/SharkyX99/backend68#readme",
+  "description": ""
 }

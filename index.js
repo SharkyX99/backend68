@@ -1,191 +1,247 @@
-// server.js
-require("dotenv").config(); // โหลดค่าจาก .env
-
 const express = require("express");
-const mysql = require("mysql2/promise");
-const cors = require("cors");
 const app = express();
-//HAsh password
-
-const bcrypt = require("bcrypt");
-
-app.use(express.json());
-app.use(cors());
-
-// ค่า prot
-
-// เรียกใช้ json webtoken
+const cors = require("cors");
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const SECRET_KEY = process.env.JWT_SECRET;
-///
-const db = mysql.createPool({
+const mysql = require("mysql2/promise");
+require("dotenv").config();
+
+app.use(cors());
+app.use(express.json());
+
+const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: process.env.DB_PORT,
   user: process.env.DB_USER,
-  password: process.env.DB_PASS,
+  password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
 });
 
-// Route ทดสอบการเชื่อมต่อ
-app.get("/ping", async (req, res) => {
+function authMiddleware(req, res, next) {
   try {
-    const [rows] = await db.query("SELECT NOW() AS now");
-    res.json({ status: "ok", time: rows[0].now });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Database error" });
-  }
-});
+    const authHeader = req.headers["authorization"];
 
-//funtion veryfly
-function verifyToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
+    if (!authHeader) {
+      return res.status(401).json({ message: "ไม่มี token ใน header" });
+    }
 
-  if (!token) {
-    return res.status(401).json({ message: "Token not provided" });
-  }
+    const parts = authHeader.split(" ");
 
-  try {
-    const decoded = jwt.verify(token, SECRET_KEY);
+    if (parts.length !== 2 || parts[0] !== "Bearer") {
+      return res.status(401).json({ message: "รูปแบบ Token ไม่ถูกต้อง" });
+    }
+
+    const token = parts[1];
+
+    // verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
     req.user = decoded;
-    next(); // ผ่านการตรวจสอบแล้วไปต่อ
+
+    next();
   } catch (err) {
-    return res.status(403).json({ message: "Invalid or expired token" });
+    return res.status(401).json({ message: "Token ไม่ถูกต้องหรือหมดอายุ" });
   }
 }
-// GET users
-app.get("/users", verifyToken, async (req, res) => {
+
+app.post("/auth/register", async (req, res) => {
   try {
-    const [rows] = await db.query(
-      "SELECT id, firstname, fullname, lastname FROM tbl_users"
-    );
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: "Query failed" });
-  }
-});
-// GET /users/:id - ดึงข้อมูลผู้ใช้ตาม id
-app.get("/users/:id", verifyToken, async (req, res, next) => {
-  const { id } = req.params;
-  try {
-    const [rows] = await db.query("SELECT * FROM tbl_users WHERE id = ?", [id]);
-    if (rows.length === 0) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    res.json(rows[0]);
-  } catch (err) {
-    next(err);
-  }
-});
+    const { username, password, fullname, address, phone, email } = req.body;
 
-// DELEAT /users/:id - ดึงข้อมูลผู้ใช้ตาม id
-app.delete("/users/:id", async (req, res, next) => {
-  const { id } = req.params;
-  try {
-    const [rows] = await db.query("DELETE FROM tbl_users WHERE id = ?", [id]);
-    if (rows.length === 0) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    res.json(rows[0]);
-  } catch (err) {
-    next(err);
-  }
-});
-// POST /users - เพิ่มผู้ใช้ใหม่
-app.post("/users", async (req, res) => {
-  const { firstname, fullname, lastname, username, password, status } =
-    req.body;
-  try {
-    if (!password)
-      return res.status(400).json({ error: "Password is required" });
-    const hashedPassword = await bcrypt.hash(password, 10);
+    if (!username || !password || !fullname)
+      return res.status(400).json({ message: "กรอกข้อมูลไม่ครบ" });
 
-    const [result] = await db.query(
-      "INSERT INTO tbl_users (firstname, fullname, lastname,username, password, status) VALUES (?, ?, ?,?, ?, ?)",
-      [firstname, fullname, lastname, username, hashedPassword, status]
-    );
-    res.json({
-      id: result.insertId,
-      firstname,
-      fullname,
-      lastname,
-      username,
-      password,
-      status,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Insert failed" });
-  }
-});
-
-// เริ่มเซิร์ฟเวอร์
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
-  console.log(`Server running on http://localhost:${PORT}`)
-);
-
-//PUT /users/:id - แก้ไขข้อมูลผู้ใช้
-app.put("/users/:id", async (req, res) => {
-  const { id } = req.params;
-  const { firstname, fullname, lastname, password } = req.body;
-
-  try {
-    let query =
-      "UPDATE tbl_users SET firstname = ?, fullname = ?, lastname = ?";
-    const params = [firstname, fullname, lastname];
-
-    // ✅ ถ้ามีการส่ง password ใหม่มา → hash แล้วเพิ่มเข้า query
-    if (password) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      query += ", password = ?";
-      params.push(hashedPassword);
-    }
-
-    query += " WHERE id = ?";
-    params.push(id);
-
-    const [result] = await db.query(query, params);
-    if (result.affectedRows === 0)
-      return res.status(404).json({ message: "User not found" });
-
-    res.json({ message: "User updated successfully" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Update failed" });
-  }
-});
-
-//POST /Login endpoint เข้าสู่ระบบ
-// POST: เข้าสู่ระบบ (Login)
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body; // ใช้ fullname หรืออาจเปลี่ยนเป็น username ตามโครงสร้างจริง
-
-  try {
-    const [rows] = await db.query(
-      "SELECT * FROM tbl_users WHERE username = ?",
+    const [exists] = await pool.query(
+      "SELECT id FROM tbl_customers WHERE username = ?",
       [username]
     );
-    if (rows.length === 0)
-      return res.status(401).json({ error: "User not found" });
+
+    if (exists.length > 0) {
+      return res.status(400).json({ message: "username ถูกใช้งานแล้ว" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await pool.query(
+      `INSERT INTO tbl_customers 
+      (username, password, fullname, address, phone, email) 
+      VALUES (?, ?, ?, ?, ?, ?)`,
+      [username, hashedPassword, fullname, address, phone, email]
+    );
+
+    res.json({ message: "สมัครสมาชิกสำเร็จ" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "เซิร์ฟเวอร์ผิดพลาด" });
+  }
+});
+
+app.post("/auth/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ message: "กรอกข้อมูลไม่ครบ" });
+    }
+
+    const [rows] = await pool.query(
+      "SELECT * FROM tbl_customers WHERE username = ?",
+      [username]
+    );
+
+    if (rows.length === 0) {
+      return res.status(400).json({ message: "ไม่พบผู้ใช้งาน" });
+    }
 
     const user = rows[0];
 
-    // ตรวจสอบรหัสผ่าน
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ error: "Invalid password" });
+    if (!isMatch) {
+      return res.status(400).json({ message: "รหัสผ่านไม่ถูกต้อง" });
+    }
 
-    // สร้าง JWT token
     const token = jwt.sign(
-      { id: user.id, fullname: user.fullname, lastname: user.lastname },
-      SECRET_KEY,
-      { expiresIn: "1h" } // อายุ token 1 ชั่วโมง
+      { id: user.id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
     );
 
-    res.json({ message: "Login successful", token });
+    return res.json({ token });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Login failed" });
+    return res.status(500).json({ message: "เซิร์ฟเวอร์ผิดพลาด" });
   }
+});
+
+app.get("/customers", authMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, username, fullname, address, phone, email, created_at FROM tbl_customers"
+    );
+
+    res.json({ data: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "เซิร์ฟเวอร์ผิดพลาด" });
+  }
+});
+
+app.get("/menus", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        m.menu_id,
+        m.name AS menu_name,
+        m.description AS menu_description,
+        m.price,
+        m.category,
+        r.restaurant_id,
+        r.name AS restaurant_name,
+        r.address AS restaurant_address,
+        r.phone AS restaurant_phone,
+        r.menu_description AS restaurant_menu_description
+      FROM tbl_menus m
+      JOIN tbl_restaurants r
+        ON m.restaurant_id = r.restaurant_id
+    `);
+
+    res.json({ data: rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "เซิร์ฟเวอร์ผิดพลาด" });
+  }
+});
+
+app.post("/orders", authMiddleware, async (req, res) => {
+  try {
+    const { menu_id, quantity } = req.body;
+
+    if (!menu_id || !quantity) {
+      return res.status(400).json({ message: "ส่งข้อมูลไม่ครบ" });
+    }
+
+    const [menuRows] = await pool.query(
+      "SELECT price, restaurant_id FROM tbl_menus WHERE menu_id = ?",
+      [menu_id]
+    );
+
+    if (menuRows.length === 0) {
+      return res.status(400).json({ message: "ไม่พบเมนูนี้" });
+    }
+
+    const price = menuRows[0].price;
+    const restaurant_id = menuRows[0].restaurant_id;
+
+    const total = price * quantity;
+
+    const customer_id = req.user.id;
+
+    await pool.query(
+      `
+      INSERT INTO tbl_orders 
+      (restaurant_id, menu_id, quantity, price, total, status, customer_id)
+      VALUES (?, ?, ?, ?, ?, 'Processing', ?)
+      `,
+      [restaurant_id, menu_id, quantity, price, total, customer_id]
+    );
+
+    return res.json({
+      message: "สร้างคำสั่งซื้อสำเร็จ",
+      order: {
+        restaurant_id,
+        menu_id,
+        quantity,
+        price,
+        total,
+        customer_id,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "เซิร์ฟเวอร์ผิดพลาด" });
+  }
+});
+
+app.get("/orders/summary", authMiddleware, async (req, res) => {
+  try {
+    const customer_id = req.user.id;
+
+    const [rows] = await pool.query(
+      `
+      SELECT 
+        c.fullname AS customer_name,
+        SUM(o.total) AS total_amount
+      FROM tbl_orders o
+      JOIN tbl_customers c ON o.customer_id = c.id
+      JOIN tbl_menus m ON o.menu_id = m.menu_id
+      WHERE o.customer_id = ?
+      `,
+      [customer_id]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.json({ customer_name: null, total_amount: 0 });
+    }
+
+    return res.json({
+      customer_name: rows[0].customer_name,
+      total_amount: rows[0].total_amount || 0,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "เซิร์ฟเวอร์ผิดพลาด" });
+  }
+});
+
+const PORT = process.env.PORT;
+
+app.listen(PORT, () => console.log(`Server running on port : ${PORT}`));
+
+app.get("/", (req, res) => res.send(`Server running on port : ${PORT}`));
+
+app.get("/ping", async (req, res) => {
+  const time = await pool.query("SELECT now() AS now");
+  return res.json({
+    message: "ok",
+    time: time[0],
+  });
 });
